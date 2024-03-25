@@ -1,25 +1,19 @@
 import os
-
 import torch
 
 try:
     import moxing as mox
-
-    # mox.file.shift('os', 'mox')
     run_on_remote = True
 except:
     run_on_remote = False
-from utils.config import cfg
-from utils.log import log, logger
 
 
 def lstrip_state_dict(state_dict, strip='module.'):
-    return {(k[len(strip):] if k.startswith(strip) else k): v
-            for k, v in state_dict.items()}
+    return {(k[len(strip):] if k.startswith(strip) else k): v for k, v in state_dict.items()}
 
 
 def save_model(model, name, cfg, logger, message=None):
-    if cfg.rank == 0:
+    if cfg.RANK == 0:
         output_path = os.path.join(cfg.OUTPUT_DIR, name)
         logger.info(f'saving model to {output_path}')
         if message is not None:
