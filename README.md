@@ -2,6 +2,8 @@
 
 This is the official repo of the paper **Fine-Grained Scene Image Classification with Modality-Agnostic Adapter** to appear in **ICME 2024**.
 
+![architecture](architecture.png)
+
 ## Environment
 
 ```bash
