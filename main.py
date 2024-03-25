@@ -10,7 +10,6 @@ from utils.log import log, logger, logging
 
 try:
     import moxing as mox
-    # mox.file.shift('os', 'mox')
     global_dict["run_on_remote"] = True
 except:
     global_dict["run_on_remote"] = False
@@ -57,35 +56,28 @@ def main():
         if len(args.cfgs) == 1 and type(args.cfgs[0]) == str:
             args.cfgs = re.split('\s+', args.cfgs[0].strip())
         if len(args.cfgs) % 2 != 0:
-            raise ValueError(
-                f"nargs of --cfgs should be divisible by 2. args.cfgs: {args.cfgs}"
-            )
-        str2bool_true = lambda x: True if type(x) == str and x.lower(
-        ) in ['true', 't', 'y', 'yes'] else x
-        str2bool_false = lambda x: False if type(x) == str and x.lower(
-        ) in ['false', 'f', 'n', 'no'] else x
+            raise ValueError(f"nargs of --cfgs should be divisible by 2. args.cfgs: {args.cfgs}")
+        str2bool_true = lambda x: True if type(x) == str and x.lower() in ['true', 't', 'y', 'yes'] else x
+        str2bool_false = lambda x: False if type(x) == str and x.lower() in ['false', 'f', 'n', 'no'] else x
         str2bool = lambda x: str2bool_true(str2bool_false(x))
         args.cfgs = list(map(str2bool, args.cfgs))
         if len(args.cfgs) > 0:
-            cfgs_from_cmd = {
-                x[0]: type(cfg[x[0]])(x[1])
-                for x in zip(args.cfgs[0::2], args.cfgs[1::2])
-            }
+            cfgs_from_cmd = {x[0]: type(cfg[x[0]])(x[1]) for x in zip(args.cfgs[0::2], args.cfgs[1::2])}
             print(f"cfgs_from_cmd:\n{pformat(cfgs_from_cmd)}")
             cfg.update(cfgs_from_cmd)
 
-    cfg.local_rank = int(os.environ['LOCAL_RANK'])
-    cfg.rank = int(os.environ['RANK'])
-    cfg.world_size = int(os.environ['WORLD_SIZE'])
-    cfg.master_addr = os.environ['MASTER_ADDR']
+    cfg.LOCAL_RANK = int(os.environ['LOCAL_RANK'])
+    cfg.RANK = int(os.environ['RANK'])
+    cfg.WORLD_SIZE = int(os.environ['WORLD_SIZE'])
+    cfg.MASTER_ADDR = os.environ['MASTER_ADDR']
 
-    if cfg.world_size > 1:
+    if cfg.WORLD_SIZE > 1:
         cfg.distributed = True
     else:
         cfg.distributed = False
 
-    batch_size_per_step = cfg.BATCH_SIZE_PER_GPU * cfg.world_size
-    cfg.effective_batch_size = batch_size_per_step * cfg.ACCUM_STEP
+    batch_size_per_step = cfg.BATCH_SIZE_PER_GPU * cfg.WORLD_SIZE
+    cfg.EFFECTIVE_BATCH_SIZE = batch_size_per_step * cfg.ACCUM_STEP
 
     if not cfg.TEST_ONLY:
         cfg.LR_WARMUP_STEP = max(1, cfg.LR_WARMUP_STEP * 16 // batch_size_per_step)
@@ -95,11 +87,11 @@ def main():
         cfg.SAVE_MODEL_EVERY_STEP = max(1, cfg.SAVE_MODEL_EVERY_STEP * 16 // batch_size_per_step)
 
     global_dict["logging_formatter"] = logging.Formatter(
-        f'[%(asctime)s][RANK={cfg.rank:02d}][%(levelname).1s]: %(message)s \t[%(pathname)s:%(lineno)d]',
+        f'[%(asctime)s][RANK={cfg.RANK:02d}][%(levelname).1s]: %(message)s \t[%(pathname)s:%(lineno)d]',
     )
 
     logger.handlers.clear()
-    if cfg.rank <= 99:
+    if cfg.RANK <= 99:
         sh = logging.StreamHandler()
         sh.setFormatter(global_dict["logging_formatter"])
         logger.addHandler(sh)

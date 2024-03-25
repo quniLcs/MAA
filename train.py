@@ -18,9 +18,15 @@ from model.vit_crop_knowbert import Net as NetWithAttention
 from utils.dataset import ImageText
 from utils.globals import global_dict
 from utils.log import log, logger
-from utils.save_n_load import *
-from utils.seed import *
-from utils.set_parameters import *
+from utils.save_n_load import save_model, load_model
+from utils.config import cfg
+from utils.seed import set_random_seed
+
+try:
+    import moxing as mox
+    run_on_remote = True
+except:
+    run_on_remote = False
 
 logger.setLevel(logging.INFO)
 
@@ -28,12 +34,14 @@ logger.setLevel(logging.INFO)
 def test_model(model, device, loader):
     logger.info('testing model...')
     model.eval()
+
     with torch.no_grad():
         correct = 0
         total = 0
         y_true = []
         y_scores = []
         loss = 0
+
         for datas in tqdm(loader):
             img = datas[0].to(device)
             texts = datas[1]
@@ -46,6 +54,7 @@ def test_model(model, device, loader):
                 loss += model.module.criterion(outputs, targets)
             else:
                 loss += model.criterion(outputs, targets)
+
             y_scores.append(outputs)
             _, index = torch.max(outputs, dim=1)
             total += targets.shape[0]
@@ -56,29 +65,20 @@ def test_model(model, device, loader):
     tmp = torch.zeros(y_scores.shape, dtype=torch.bool)
     tmp[range(y_scores.shape[0]), y_true] = 1
     y_true = tmp.numpy()
-    mAP = average_precision_score(y_true,
-                                  y_scores.cpu().numpy(),
-                                  average='macro')
-    weighted_AP = average_precision_score(y_true,
-                                          y_scores.cpu().numpy(),
-                                          average='weighted')
+    mAP = average_precision_score(y_true, y_scores.cpu().numpy(), average='macro')
+    weighted_AP = average_precision_score(y_true, y_scores.cpu().numpy(), average='weighted')
 
     # mAP in the paper
     precision_per_class = torch.zeros(y_scores.shape[1])
     for i in tqdm(range(y_scores.shape[0])):
-        precision_per_class[y_label[i]] += average_precision_score(
-            y_true[i],
-            y_scores.cpu().numpy()[i])
-    class_count = [(torch.Tensor(y_label) == i).sum().item()
-                   for i in range(cfg.NUM_CLASSES)]
-    total_precision = [
-        precision_per_class[i] / class_count[i] for i in range(cfg.NUM_CLASSES)
-    ]
+        precision_per_class[y_label[i]] += average_precision_score(y_true[i], y_scores.cpu().numpy()[i])
+    class_count = [(torch.Tensor(y_label) == i).sum().item() for i in range(cfg.NUM_CLASSES)]
+    total_precision = [precision_per_class[i] / class_count[i] for i in range(cfg.NUM_CLASSES)]
     mAP_paper = torch.Tensor(total_precision).mean().item()
     acc = correct / total
     loss = (loss / total).item()
-
     total_precision = [x.item() for x in total_precision]
+
     logger.info(f'paper AP for every class:\n{total_precision}')
     logger.info('Accuracy: ' + str(acc))
     logger.info('mAP: ' + str(mAP))
@@ -120,18 +120,19 @@ def get_dataloader():
 
     train_datasampler = DistributedSampler(
         trainset,
-        num_replicas=cfg.world_size,
-        rank=cfg.rank,
+        num_replicas=cfg.WORLD_SIZE,
+        rank=cfg.RANK,
         shuffle=True,
         drop_last=True,
     )
     val_datasampler = DistributedSampler(
         valset,
-        num_replicas=cfg.world_size,
-        rank=cfg.rank,
+        num_replicas=cfg.WORLD_SIZE,
+        rank=cfg.RANK,
         shuffle=True,
         drop_last=False,
     )
+
     train_loader = torch.utils.data.DataLoader(
         dataset=trainset,
         batch_size=cfg.BATCH_SIZE_PER_GPU,
@@ -140,7 +141,6 @@ def get_dataloader():
         drop_last=False,
         sampler=train_datasampler,
     )
-
     val_loader = torch.utils.data.DataLoader(
         dataset=valset,
         batch_size=cfg.BATCH_SIZE_PER_GPU,
@@ -160,10 +160,9 @@ def prepare_output(local_output_dir):
     shutil.rmtree(local_output_dir, ignore_errors=True)
     os.makedirs(os.path.join(local_output_dir, "others/codes/"), exist_ok=True)
 
-    if cfg.rank == 0:
-        d = cfg.TB_DIR
-        os.makedirs(d, exist_ok=True)
-        tb_writer = SummaryWriter(log_dir=d)
+    if cfg.RANK == 0:
+        os.makedirs(cfg.TB_DIR, exist_ok=True)
+        tb_writer = SummaryWriter(log_dir=cfg.TB_DIR)
     else:
 
         class dummy_tb_writer(object):
@@ -182,49 +181,43 @@ def prepare_output(local_output_dir):
 
         tb_writer = dummy_tb_writer()
 
-    shutil.copyfile(
-        __file__,
-        os.path.join(local_output_dir, "others/codes/",
-                     __file__.split('/')[-1]))
-    shutil.copytree('model',
-                    os.path.join(local_output_dir, 'others/codes/model'))
-    shutil.copytree('utils',
-                    os.path.join(local_output_dir, 'others/codes/utils'))
+    shutil.copyfile(__file__, os.path.join(local_output_dir, "others/codes/", __file__.split('/')[-1]))
+    shutil.copytree('model', os.path.join(local_output_dir, 'others/codes/model'))
+    shutil.copytree('utils', os.path.join(local_output_dir, 'others/codes/utils'))
+
     if run_on_remote:
         mox.file.copy_parallel(os.path.join(local_output_dir, 'others'),
                                os.path.join(cfg.OUTPUT_DIR, 'others'))
 
-    if cfg.rank == 0:
-        fh = logging.FileHandler(os.path.join(local_output_dir,
-                                              'others/trainval.log'),
-                                 mode='w')
+    if cfg.RANK == 0:
+        fh = logging.FileHandler(os.path.join(local_output_dir, 'others/trainval.log'), mode='w')
         fh.setLevel(logging.INFO)
         fh.setFormatter(global_dict["logging_formatter"])
         logger.addHandler(fh)
+
     logger.info('start logging')
     logger.info('OUTPUT_DIR: ' + str(cfg.OUTPUT_DIR))
     logger.info('TB_DIR: ' + str(cfg.TB_DIR))
     logger.info('configs:\n' + pformat(cfg.as_dict()))
-    logger.info(
-        f"cfg.local_rank={cfg.local_rank}, cfg.rank={cfg.rank}, cfg.world_size={cfg.world_size}, cfg.distributed={cfg.distributed}"
-    )
+    logger.info(f"cfg.LOCAL_RANK={cfg.LOCAL_RANK}, cfg.RANK={cfg.RANK}, cfg.WORLD_SIZE={cfg.WORLD_SIZE}, cfg.distributed={cfg.distributed}")
     return tb_writer
 
 
 def main():
     # setup
     if cfg.distributed:
-        torch.cuda.set_device(cfg.local_rank)
+        torch.cuda.set_device(cfg.LOCAL_RANK)
         dist.init_process_group(
             backend='nccl',
             # init_method="env://",
-            # world_size=cfg.world_size,
-            # rank=cfg.rank,
+            # world_size=cfg.WORLD_SIZE,
+            # rank=cfg.RANK,
         )
 
     if cfg.SEED == 'random':
         cfg.SEED = randint(0, 10**10)
     set_random_seed(cfg.SEED)
+
     if torch.cuda.is_available():
         device = torch.device('cuda')
     else:
@@ -252,24 +245,22 @@ def main():
         cfg.LR_COSINE_T_0 = (step_per_epoch * cfg.NUM_EPOCHS - cfg.LR_WARMUP_STEP) // num_T_0
         cfg.VALIDATE_EVERY_STEP = step_per_epoch // 2
         cfg.SAVE_MODEL_EVERY_STEP = step_per_epoch
-
-    logger.info(f"new cfg.LR_COSINE_T_0 = {cfg.LR_COSINE_T_0}")
+        logger.info(f"new cfg.LR_COSINE_T_0 = {cfg.LR_COSINE_T_0}")
 
     model = NetWithAttention(cfg)
+    model.to(device)
 
     if cfg.TEST_ONLY:
-        model.to(device)
         load_model(model, cfg.CHECKPOINT_PATH, device, logger)
         logger.info(str(test_model(model, device, val_loader)))
         logger.info('configs:\n' + pformat(cfg.as_dict()))
         return 0
 
-    model.to(device)
     if cfg.distributed:
         model = DDP(
             model,
-            device_ids=[cfg.local_rank],
-            output_device=cfg.local_rank,
+            device_ids=[cfg.LOCAL_RANK],
+            output_device=cfg.LOCAL_RANK,
             find_unused_parameters=True,
             gradient_as_bucket_view=True,
         )
@@ -278,8 +269,8 @@ def main():
 
     # Loss and optimizer
     if cfg.TEST_LR_RANGE:
-        cfg.NUM_EPOCHS = 1
         cfg.LR = 1e-6
+        cfg.NUM_EPOCHS = 1
         cfg.LOG_EVERY_STEP = 10
         cfg.VALIDATE_EVERY_STEP = step_per_epoch // 8
         cfg.SAVE_MODEL_EVERY_STEP = float('inf')
@@ -287,38 +278,42 @@ def main():
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.LR)
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.USE_AMP)
 
-    if cfg.USE_MULTISTEP:
-        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer, milestones=[200, 900], gamma=0.3)
+    if not cfg.TEST_LR_RANGE:
+        lr_scheduler_warmup = torch.optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=lambda step: min(step / cfg.LR_WARMUP_STEP, 1),
+        )
+        if cfg.USE_MULTISTEP:
+            lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
+                optimizer,
+                milestones=[200, 900],
+                gamma=0.3,
+            )
+        else:
+            lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer,
+                T_0=cfg.LR_COSINE_T_0,
+                T_mult=cfg.LR_COSINE_T_MULT,
+                eta_min=1e-6,
+            )
     else:
-        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(
             optimizer,
-            T_0=cfg.LR_COSINE_T_0,
-            T_mult=cfg.LR_COSINE_T_MULT,
-            eta_min=1e-6)
-
-    lr_scheduler_warmup = torch.optim.lr_scheduler.LambdaLR(
-        optimizer,
-        lr_lambda=lambda step: min(step / cfg.LR_WARMUP_STEP, 1),
-    )
-
-    if cfg.TEST_LR_RANGE:
-        lr_scheduler_test_lr_range = torch.optim.lr_scheduler.ExponentialLR(
-            optimizer,
-            (1e-1 / cfg.LR)**(1 / (len(train_loader) * cfg.NUM_EPOCHS)))
-
-    curr_lr = optimizer.param_groups[0]['lr']
-    max_val_res = torch.zeros(2)
+            (1e-1 / cfg.LR) ** (1 / (len(train_loader) * cfg.NUM_EPOCHS)),
+        )
 
     # Train the model
     logger.info('start training')
-
+    max_val_res = torch.zeros(2)
     save_model(model, 'init_model.pth', cfg, logger)
+
     for epoch in range(cfg.NUM_EPOCHS):
-        model.train()
         train_loader.sampler.set_epoch(epoch)
+
         for i, datas in enumerate(train_loader):
+            model.train()
             global_step = epoch * step_per_epoch + i + 1
+
             with torch.cuda.amp.autocast(enabled=cfg.USE_AMP):
                 img = datas[0].to(device)
                 texts = datas[1]
@@ -326,7 +321,6 @@ def main():
 
                 outputs = model(img, texts, targets)
                 loss = outputs
-                loss = loss.mean()
 
             # Backward and optimize
             scaler.scale(loss).backward()
@@ -338,65 +332,52 @@ def main():
                 model.zero_grad(set_to_none=True)
 
             # Update learning rate
+            curr_lr = optimizer.param_groups[0]['lr']
             if not cfg.TEST_LR_RANGE:
-                tb_writer.add_scalar('train/lr', curr_lr, global_step)
                 if global_step < cfg.LR_WARMUP_STEP:
                     lr_scheduler_warmup.step()
                 else:
                     lr_scheduler.step()
-                curr_lr = optimizer.param_groups[0]['lr']
             else:
-                lr_scheduler_test_lr_range.step()
-                curr_lr = optimizer.param_groups[0]['lr']
+                lr_scheduler.step()
 
-            # log
+            # Log
             if global_step % cfg.LOG_EVERY_STEP == 0:
                 logger.info(
                     f'Epoch [{epoch + 1}/{cfg.NUM_EPOCHS}], Step [{i + 1}/{step_per_epoch}], '
                     f'Loss: {loss.item():.4f}, LR: {curr_lr:.3e}, MEM: {torch.cuda.memory_reserved() / 1024 / 1024:.0f} MB'
                 )
-                if cfg.rank == 0:
-                    tb_writer.add_scalar('train/loss', loss.item(),
-                                         global_step)
-                if cfg.TEST_LR_RANGE:
+                if cfg.RANK == 0:
+                    tb_writer.add_scalar('train/loss', loss.item(), global_step)
                     tb_writer.add_scalar('train/lr', curr_lr, global_step)
-                    tb_writer.add_scalars(
-                        'train/loss_lr',
-                        dict(curr_lr=curr_lr, loss=loss.item()),
-                        global_step,
-                    )
+                if cfg.TEST_LR_RANGE:
+                    tb_writer.add_scalars('train/loss_lr', dict(curr_lr=curr_lr, loss=loss.item()), global_step)
 
             # Calculate Metrics
-            if global_step % cfg.VALIDATE_EVERY_STEP == 0 and cfg.rank == 0:
+            if global_step % cfg.VALIDATE_EVERY_STEP == 0 and cfg.RANK == 0:
                 res, loss = test_model(model, device, val_loader)
                 res = torch.Tensor(res)
                 if res[-1] > max_val_res[-1]:
-                    save_model(
-                        model, 'best_trained_model.pth', cfg, logger,
-                        '"best_trained_model.pth" saved. Current global_step is '
-                        + str(global_step))
+                    save_model(model, 'best_trained_model.pth', cfg, logger,
+                               '"best_trained_model.pth" saved. Current global_step is ' + str(global_step))
                 max_val_res = torch.max(res, max_val_res)
-                logger.info('Current max ACC and mAP: ' + str(max_val_res))
-                tb_writer.add_scalar('val/current_max_mAP',
-                                     max_val_res[-1], global_step)
 
-                tb_writer.add_scalar('val/accu_val', res[0], global_step)
-                tb_writer.add_scalar('val/mAP_val', res[-1], global_step)
+                logger.info('Current max ACC and mAP: ' + str(max_val_res))
+                tb_writer.add_scalar('val/max_mAP', max_val_res[-1], global_step)
+                tb_writer.add_scalar('val/acc', res[0], global_step)
+                tb_writer.add_scalar('val/mAP', res[-1], global_step)
                 tb_writer.add_scalar('val/loss', loss, global_step)
 
-                if cfg.rank == 0:
-                    if cfg.OUTPUT_DIR.startswith('s3://'):
-                        tb_writer.flush()
-                        mox.file.copy_parallel(
-                            cfg.TB_DIR,
-                            os.path.join(cfg.OUTPUT_DIR, 'others/tb_logs'),
-                        )
-                        mox.file.copy_parallel(
-                            os.path.join(local_output_dir,
-                                         'others/trainval.log'),
-                            os.path.join(cfg.OUTPUT_DIR,
-                                         'others/trainval.log'),
-                        )
+                if cfg.RANK == 0 and cfg.OUTPUT_DIR.startswith('s3://'):
+                    tb_writer.flush()
+                    mox.file.copy_parallel(
+                        cfg.TB_DIR,
+                        os.path.join(cfg.OUTPUT_DIR, 'others/tb_logs'),
+                    )
+                    mox.file.copy_parallel(
+                        os.path.join(local_output_dir, 'others/trainval.log'),
+                        os.path.join(cfg.OUTPUT_DIR, 'others/trainval.log'),
+                    )
 
             # Save model
             if global_step % cfg.SAVE_MODEL_EVERY_STEP == 0:
@@ -410,7 +391,3 @@ def main():
     logger.info('OUTPUT_DIR: ' + cfg.OUTPUT_DIR)
     logger.info('TB_DIR: ' + cfg.TB_DIR)
     logger.info('configs:\n' + pformat(cfg.as_dict()))
-
-
-if __name__ == '__main__':
-    main()
