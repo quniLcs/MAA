@@ -10,7 +10,6 @@ from utils.log import log, logger, logging
 
 try:
     import moxing as mox
-
     # mox.file.shift('os', 'mox')
     global_dict["run_on_remote"] = True
 except:
@@ -85,19 +84,15 @@ def main():
     else:
         cfg.distributed = False
 
-    batch_size_per_step = cfg.batch_size_pergpu * cfg.world_size
-    cfg.effective_batch_size = batch_size_per_step * cfg.accum_iters
+    batch_size_per_step = cfg.BATCH_SIZE_PER_GPU * cfg.world_size
+    cfg.effective_batch_size = batch_size_per_step * cfg.ACCUM_STEP
 
     if not cfg.TEST_ONLY:
-        cfg.LR_WARMUP_STEP = max(
-            1, cfg.LR_WARMUP_STEP * 16 // batch_size_per_step)
-        cfg.LR_COSINE_T0 = max(1, cfg.LR_COSINE_T0 * 16 // batch_size_per_step)
-        cfg.SAVE_MODEL_EVERY_STEP = max(
-            1, cfg.SAVE_MODEL_EVERY_STEP * 16 // batch_size_per_step)
-        cfg.VALIDATION_EVERY_STEP = max(
-            1, cfg.VALIDATION_EVERY_STEP * 16 // batch_size_per_step)
-        cfg.LOG_EVERY_STEP = max(
-            1, cfg.LOG_EVERY_STEP * 16 // batch_size_per_step)
+        cfg.LR_WARMUP_STEP = max(1, cfg.LR_WARMUP_STEP * 16 // batch_size_per_step)
+        cfg.LR_COSINE_T_0 = max(1, cfg.LR_COSINE_T_0 * 16 // batch_size_per_step)
+        cfg.LOG_EVERY_STEP = max(1, cfg.LOG_EVERY_STEP * 16 // batch_size_per_step)
+        cfg.VALIDATE_EVERY_STEP = max(1, cfg.VALIDATE_EVERY_STEP * 16 // batch_size_per_step)
+        cfg.SAVE_MODEL_EVERY_STEP = max(1, cfg.SAVE_MODEL_EVERY_STEP * 16 // batch_size_per_step)
 
     global_dict["logging_formatter"] = logging.Formatter(
         f'[%(asctime)s][RANK={cfg.rank:02d}][%(levelname).1s]: %(message)s \t[%(pathname)s:%(lineno)d]',

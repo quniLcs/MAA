@@ -1,31 +1,24 @@
 [default]
 
 TEST_ONLY = false
+TEST_LR_RANGE = false
 
-IS_TESTING_LR_RANGE = false
-
-OUTPUT_DIR = "./outputs"
-USE_AMP = true
 SEED = 42
-
-LR = 3e-4
-LR_COSINE_T0 = 500
-LR_COSINE_T_MULT = 1
-num_T = 25
-use_num_T = true
-use_multistep = false
-lr_no_restarts = false
+USE_AMP = true
+LR = 3e-5
 LR_WARMUP_STEP = 500
+LR_COSINE_T_0 = 500
+LR_COSINE_T_MULT = 1
+NUM_T = 25
+USE_NUM_T = true
+USE_MULTISTEP = false
+
 NUM_EPOCHS = 50
-BATCH_SIZE_PERGPU = 8
 NUM_WORKERS = 8
-SGD_WEIGHT_DECAY = 0
-SGD_MOMENTUM = 0.9
-accum_iters = 32
+BATCH_SIZE_PER_GPU = 8
+ACCUM_STEP = 32
 
-SAVE_MODEL_EVERY_STEP = 8000
-VALIDATION_EVERY_STEP = 200
 LOG_EVERY_STEP = 50
-
-# CPU_NUM_THREADS = 8
-DEVICE = "cuda"
+VALIDATE_EVERY_STEP = 200
+SAVE_MODEL_EVERY_STEP = 8000
+OUTPUT_DIR = "outputs"

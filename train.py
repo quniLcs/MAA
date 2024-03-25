@@ -134,19 +134,16 @@ def get_dataloader():
     )
     train_loader = torch.utils.data.DataLoader(
         dataset=trainset,
-        batch_size=cfg.batch_size_pergpu,
+        batch_size=cfg.BATCH_SIZE_PER_GPU,
         num_workers=cfg.NUM_WORKERS,
         pin_memory=False,
         drop_last=False,
         sampler=train_datasampler,
     )
 
-    if cfg.TEST_ONLY:
-        cfg.batch_size_pergpu = 1
-
     val_loader = torch.utils.data.DataLoader(
         dataset=valset,
-        batch_size=cfg.batch_size_pergpu,
+        batch_size=cfg.BATCH_SIZE_PER_GPU,
         num_workers=cfg.NUM_WORKERS,
         pin_memory=False,
         drop_last=False,
@@ -177,7 +174,7 @@ def prepare_output(local_output_dir):
             def add_scalar(self, *args):
                 pass
 
-            def add_scalers(self, *args):
+            def add_scalars(self, *args):
                 pass
 
             def flush(self, *args):
@@ -249,16 +246,14 @@ def main():
 
     train_loader, val_loader = get_dataloader()
     step_per_epoch = len(train_loader)
-    if cfg.use_num_T:
-        num_T0 = (cfg.LR_COSINE_T_MULT**cfg.num_T -
-                  1) // (cfg.LR_COSINE_T_MULT -
-                         1) if cfg.LR_COSINE_T_MULT > 1 else cfg.num_T
-        cfg.LR_COSINE_T0 = (step_per_epoch * cfg.NUM_EPOCHS -
-                            cfg.LR_WARMUP_STEP) // num_T0
-        cfg.VALIDATION_EVERY_STEP = step_per_epoch // 2
+    if cfg.USE_NUM_T:
+        num_T_0 = (cfg.LR_COSINE_T_MULT ** cfg.NUM_T - 1) // (cfg.LR_COSINE_T_MULT - 1) \
+            if cfg.LR_COSINE_T_MULT > 1 else cfg.NUM_T
+        cfg.LR_COSINE_T_0 = (step_per_epoch * cfg.NUM_EPOCHS - cfg.LR_WARMUP_STEP) // num_T_0
+        cfg.VALIDATE_EVERY_STEP = step_per_epoch // 2
         cfg.SAVE_MODEL_EVERY_STEP = step_per_epoch
 
-    logger.info(f"new cfg.LR_COSINE_T0 = {cfg.LR_COSINE_T0}")
+    logger.info(f"new cfg.LR_COSINE_T_0 = {cfg.LR_COSINE_T_0}")
 
     model = NetWithAttention(cfg)
 
@@ -282,22 +277,23 @@ def main():
     logger.info('Model:\n' + pformat(model))
 
     # Loss and optimizer
-    if cfg.IS_TESTING_LR_RANGE:
+    if cfg.TEST_LR_RANGE:
         cfg.NUM_EPOCHS = 1
         cfg.LR = 1e-6
         cfg.LOG_EVERY_STEP = 10
+        cfg.VALIDATE_EVERY_STEP = step_per_epoch // 8
         cfg.SAVE_MODEL_EVERY_STEP = float('inf')
-        cfg.VALIDATION_EVERY_STEP = step_per_epoch // 8
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.LR)
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.USE_AMP)
 
-    if cfg.use_multistep:
+    if cfg.USE_MULTISTEP:
         lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
             optimizer, milestones=[200, 900], gamma=0.3)
     else:
         lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer,
-            T_0=cfg.LR_COSINE_T0,
+            T_0=cfg.LR_COSINE_T_0,
             T_mult=cfg.LR_COSINE_T_MULT,
             eta_min=1e-6)
 
@@ -306,7 +302,7 @@ def main():
         lr_lambda=lambda step: min(step / cfg.LR_WARMUP_STEP, 1),
     )
 
-    if cfg.IS_TESTING_LR_RANGE:
+    if cfg.TEST_LR_RANGE:
         lr_scheduler_test_lr_range = torch.optim.lr_scheduler.ExponentialLR(
             optimizer,
             (1e-1 / cfg.LR)**(1 / (len(train_loader) * cfg.NUM_EPOCHS)))
@@ -316,15 +312,6 @@ def main():
 
     # Train the model
     logger.info('start training')
-    logger.info('freeze parameters of vision_net and knowbert.')
-    set_parameter_requires_grad(model,
-                                '^vision_net',
-                                requires_grad=False,
-                                set_others=False)
-    set_parameter_requires_grad(model,
-                                '^knowbert',
-                                requires_grad=False,
-                                set_others=False)
 
     save_model(model, 'init_model.pth', cfg, logger)
     for epoch in range(cfg.NUM_EPOCHS):
@@ -343,9 +330,7 @@ def main():
 
             # Backward and optimize
             scaler.scale(loss).backward()
-            if (
-                    global_step
-            ) % cfg.accum_iters == 0 or global_step == cfg.num_epochs * step_per_epoch:
+            if global_step % cfg.ACCUM_STEP == 0 or global_step == cfg.num_epochs * step_per_epoch:
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 scaler.step(optimizer)
@@ -353,7 +338,7 @@ def main():
                 model.zero_grad(set_to_none=True)
 
             # Update learning rate
-            if not cfg.IS_TESTING_LR_RANGE:
+            if not cfg.TEST_LR_RANGE:
                 tb_writer.add_scalar('train/lr', curr_lr, global_step)
                 if global_step < cfg.LR_WARMUP_STEP:
                     lr_scheduler_warmup.step()
@@ -373,7 +358,7 @@ def main():
                 if cfg.rank == 0:
                     tb_writer.add_scalar('train/loss', loss.item(),
                                          global_step)
-                if cfg.IS_TESTING_LR_RANGE:
+                if cfg.TEST_LR_RANGE:
                     tb_writer.add_scalar('train/lr', curr_lr, global_step)
                     tb_writer.add_scalars(
                         'train/loss_lr',
@@ -382,7 +367,7 @@ def main():
                     )
 
             # Calculate Metrics
-            if global_step % cfg.VALIDATION_EVERY_STEP == 0 and cfg.rank == 0:
+            if global_step % cfg.VALIDATE_EVERY_STEP == 0 and cfg.rank == 0:
                 res, loss = test_model(model, device, val_loader)
                 res = torch.Tensor(res)
                 if res[-1] > max_val_res[-1]:

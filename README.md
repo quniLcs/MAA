@@ -65,7 +65,7 @@ python main.py -c configs/train_activity.toml
 You can also pass parameters like this:
 
 ```bash
-python main.py -c CONFIG_PATH --cfgs OUTPUT_DIR outputs NUM_EPOCHS 50 BATCH_SIZE_PERGPU 8
+python main.py -c CONFIG_PATH --cfgs OUTPUT_DIR outputs NUM_EPOCHS 50 BATCH_SIZE_PER_GPU 8
 ```
 
 The parameters after `--cfgs` are config items in `configs/*.toml`.
