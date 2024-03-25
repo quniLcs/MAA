@@ -1,0 +1,4 @@
+[default]
+
+DATASET_NAME = "bottle"
+NUM_CLASSES = 20

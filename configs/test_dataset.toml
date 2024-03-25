@@ -1,0 +1,5 @@
+[default]
+[default.interaction]
+dynaconf_include = ["test_base.toml", "activity.toml"]  # activity.toml, bottles.toml, context.toml
+
+CHECKPOINT_PATH = "outputs/vit_knowbert_dataset/best_trained_model.pth"

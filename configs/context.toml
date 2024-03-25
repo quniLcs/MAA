@@ -1,0 +1,4 @@
+[default]
+
+DATASET_NAME = "context"
+NUM_CLASSES = 28

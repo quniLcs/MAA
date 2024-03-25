@@ -1,0 +1,4 @@
+[default]
+
+DATASET_NAME = "activity"
+NUM_CLASSES = 21

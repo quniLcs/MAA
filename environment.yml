@@ -1,0 +1,11 @@
+name: maa
+channels:
+  - pytorch
+  - defaults
+  - conda-forge
+dependencies:
+  - cudatoolkit=10.2
+  - python=3.8
+  - pytorch=1.9.1
+  - torchvision=0.10.1
+  - scipy
