@@ -14,7 +14,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
-from model.vit_crop_knowbert import Net as NetWithAttention
+from model.vit_crop_knowbert import Net
 from utils.dataset import ImageText
 from utils.globals import global_dict
 from utils.log import log, logger
@@ -49,7 +49,7 @@ def test_model(model, device, loader):
             y_true.extend(list(targets))
             targets = targets.to(device)
 
-            outputs = model(img=img, texts=texts)
+            outputs = model(img, texts)
             if isinstance(model, DDP):
                 loss += model.module.criterion(outputs, targets)
             else:
@@ -247,7 +247,7 @@ def main():
         cfg.SAVE_MODEL_EVERY_STEP = step_per_epoch
         logger.info(f"new cfg.LR_COSINE_T_0 = {cfg.LR_COSINE_T_0}")
 
-    model = NetWithAttention(cfg)
+    model = Net(cfg)
     model.to(device)
 
     if cfg.TEST_ONLY:
