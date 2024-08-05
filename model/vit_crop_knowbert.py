@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+# import torch.nn.functional as F
 from torchvision import transforms
 from timm.models import create_model
 
@@ -47,6 +48,10 @@ class Net(nn.Module):
         self.norm_text = nn.LayerNorm(dim)
         self.activation = nn.LeakyReLU(inplace=True)
 
+        self.global_e = nn.Parameter(torch.zeros(1, 1, dim), requires_grad=True)
+        self.local_e = nn.Parameter(torch.zeros(1, 1, dim), requires_grad=True)
+        self.text_e = nn.Parameter(torch.zeros(1, 1, dim), requires_grad=True)
+
         nhead = 8
         self.transformer_1 = nn.TransformerEncoderLayer(d_model=dim, nhead=nhead, batch_first=True)
         self.transformer_2 = nn.TransformerEncoderLayer(d_model=dim, nhead=nhead, batch_first=True)
@@ -55,7 +60,7 @@ class Net(nn.Module):
         self.criterion = nn.CrossEntropyLoss()
 
     @staticmethod
-    def convert_kb_inputs_to_device(inputs, device):
+    def convert_kb_input_to_device(inputs, device):
         inputs['tokens']['tokens'] = inputs['tokens']['tokens'].to(device)
         inputs['segment_ids'] = inputs['segment_ids'].to(device)
 
@@ -84,7 +89,7 @@ class Net(nn.Module):
 
     def forward_text(self, image, text):
         for kb_input in self.language_batcher.iter_batches(text, verbose=False):
-            self.convert_kb_inputs_to_device(kb_input, image.device)
+            self.convert_kb_input_to_device(kb_input, image.device)
             kb_output = self.language_net(**kb_input)
         text_f = kb_output['contextual_embeddings']
         return text_f
@@ -94,9 +99,13 @@ class Net(nn.Module):
         local_f = self.forward_local(image)
         text_f = self.forward_text(image, text)
 
-        global_f = self.activation(self.norm_global(self.linear_global(global_f)))
-        local_f = self.activation(self.norm_local(self.linear_local(local_f)))
-        text_f = self.activation(self.norm_text(self.linear_text(text_f)))
+        global_f = self.activation(self.linear_global(self.norm_global(global_f)))
+        local_f = self.activation(self.linear_local(self.norm_local(local_f)))
+        text_f = self.activation(self.linear_text(self.norm_text(text_f)))
+
+        global_f = global_f + self.global_e
+        local_f = local_f + self.local_e
+        text_f = text_f + self.text_e
 
         general_f = torch.cat((global_f, local_f, text_f), dim=1)
         general_f = self.transformer_1(general_f)
@@ -104,6 +113,7 @@ class Net(nn.Module):
 
         general_f = torch.mean(general_f, dim=1)
         logits = self.head(general_f)
+        # logits = F.dropout(logits, p=0.3, training=self.training)
 
         if targets is None:
             return logits
